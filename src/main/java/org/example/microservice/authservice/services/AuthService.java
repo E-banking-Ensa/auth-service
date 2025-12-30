@@ -41,40 +41,29 @@ public class AuthService {
     }
 
     // register a new user in Keycloak, assign roles and send verification email
-    // returns UserRef containing created user's id and location (if available)
+    // now resolves the real Keycloak id using the email stored in UserRef
     public UserRef registerUser(SignupRequest signup) {
         // obtain admin token to perform realm operations
         String adminToken = keycloakAdminClient.obtainAdminAccessToken();
 
-        // create user in Keycloak
+        // create user in Keycloak (returns email + location)
         UserRef ref = userService.createUser(signup, adminToken);
-        String userId = ref.getId();
+
+        // resolve real Keycloak user id via email
+        String userId = userService.findUserIdByEmail(ref.getEmail(), adminToken);
 
         // assign requested roles (whitelisted by RoleService)
         List<String> mapped = roleService.mapToRealmRoles(signup.getRoles());
-        if (mapped != null && !mapped.isEmpty()) {
+        if (mapped != null && !mapped.isEmpty() && userId != null && !userId.isBlank()) {
             roleService.assignRealmRoles(userId, mapped, adminToken);
         }
 
         // trigger email verification
-        emailService.sendVerificationEmail(userId, adminToken);
+        //if (userId != null && !userId.isBlank()) {
+        //    emailService.sendVerificationEmail(userId, adminToken);
+        //}
 
         return ref;
-    }
-
-    // assign roles to an existing user
-    public void assignRolesToUser(String userId, List<String> roles) {
-        String adminToken = keycloakAdminClient.obtainAdminAccessToken();
-        List<String> mapped = roleService.mapToRealmRoles(roles);
-        if (mapped != null && !mapped.isEmpty()) {
-            roleService.assignRealmRoles(userId, mapped, adminToken);
-        }
-    }
-
-    // resend verification email
-    public void resendVerification(String userId) {
-        String adminToken = keycloakAdminClient.obtainAdminAccessToken();
-        emailService.sendVerificationEmail(userId, adminToken);
     }
 
     // exchange username/password for tokens at Keycloak
@@ -107,5 +96,20 @@ public class AuthService {
             throw new HttpClientErrorException(resp.getStatusCode(), "Unable to obtain token");
         }
         return resp.getBody();
+    }
+
+    // assign roles to an existing user
+    public void assignRolesToUser(String userId, List<String> roles) {
+        String adminToken = keycloakAdminClient.obtainAdminAccessToken();
+        List<String> mapped = roleService.mapToRealmRoles(roles);
+        if (mapped != null && !mapped.isEmpty()) {
+            roleService.assignRealmRoles(userId, mapped, adminToken);
+        }
+    }
+
+    // resend verification email
+    public void resendVerification(String userId) {
+        String adminToken = keycloakAdminClient.obtainAdminAccessToken();
+        emailService.sendVerificationEmail(userId, adminToken);
     }
 }

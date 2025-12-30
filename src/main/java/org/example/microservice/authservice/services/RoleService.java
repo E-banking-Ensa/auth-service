@@ -1,7 +1,10 @@
 package org.example.microservice.authservice.services;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
 import java.net.URI;
@@ -10,6 +13,8 @@ import java.util.stream.Collectors;
 
 @Service
 public class RoleService {
+    private static final Logger log = LoggerFactory.getLogger(RoleService.class);
+
     private final RestTemplate rest = new RestTemplate();
     private final KeycloakAdminClient kc;
 
@@ -46,7 +51,25 @@ public class RoleService {
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(adminToken);
         HttpEntity<List<Map<String,Object>>> entity = new HttpEntity<>(reps, headers);
-        rest.exchange(URI.create(url), HttpMethod.POST, entity, Void.class);
+
+        try {
+            rest.exchange(URI.create(url), HttpMethod.POST, entity, Void.class);
+        } catch (RestClientException ex) {
+            // log all relevant variables to help debugging
+            Map<String, Object> debug = new LinkedHashMap<>();
+            debug.put("userId", userId);
+            debug.put("roleNames", roleNames);
+            debug.put("kcBase", kcBase);
+            debug.put("realm", kc.getRealm());
+            debug.put("url", url);
+            debug.put("adminTokenPresent", adminToken != null && !adminToken.isBlank());
+            debug.put("roleRepresentations", reps);
+
+            log.error("Failed to assign realm roles in Keycloak: {}", debug, ex);
+
+            // rethrow with context so controller / error handler can surface it
+            throw new IllegalStateException("Error assigning roles in Keycloak. Context: " + debug, ex);
+        }
     }
 
     // read a realm role representation (id, name)
@@ -65,4 +88,3 @@ public class RoleService {
         return rep;
     }
 }
-

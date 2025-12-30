@@ -18,7 +18,7 @@ import java.util.Map;
 public class KeycloakController {
 
     private final AuthService authService;
-
+    
     public KeycloakController(AuthService authService) {
         this.authService = authService;
     }

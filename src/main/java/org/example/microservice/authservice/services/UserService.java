@@ -21,7 +21,7 @@ public class UserService {
         this.kc = kc;
     }
 
-    // create user and return id + location
+    // create user and return reference (email + location only)
     public UserRef createUser(SignupRequest signup, String adminToken) {
         String kcBase = kc.getBaseUrl();
         String url = kcBase + "/admin/realms/" + kc.getRealm() + "/users";
@@ -43,16 +43,8 @@ public class UserService {
         ResponseEntity<Void> resp = rest.postForEntity(URI.create(url), entity, Void.class);
         URI loc = resp.getHeaders().getLocation();
 
-        String userId = null;
-        if (loc != null) {
-            String path = loc.getPath();
-            int idx = path.lastIndexOf('/');
-            if (idx > -1 && idx + 1 < path.length()) userId = path.substring(idx + 1);
-        }
-        if (userId == null || userId.isBlank()) {
-            userId = findUserIdByUsername(signup.getUsername(), adminToken);
-        }
-        return new UserRef(userId, loc);
+        // we deliberately do NOT try to guess the id here anymore
+        return new UserRef(signup.getEmail(), loc);
     }
 
     // query user by username to get id
@@ -71,5 +63,22 @@ public class UserService {
         }
         return null;
     }
-}
 
+    // query user by email to get id
+    public String findUserIdByEmail(String email, String adminToken) {
+        if (email == null || email.isBlank()) return null;
+        String kcBase = kc.getBaseUrl();
+        String url = kcBase + "/admin/realms/" + kc.getRealm() + "/users?email=" + email;
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(adminToken);
+        HttpEntity<Void> entity = new HttpEntity<>(headers);
+        ResponseEntity<List> resp = rest.exchange(URI.create(url), HttpMethod.GET, entity, List.class);
+        if (resp.getBody() != null && !resp.getBody().isEmpty()) {
+            Object first = resp.getBody().get(0);
+            if (first instanceof Map<?,?> map && map.get("id") != null) {
+                return Objects.toString(map.get("id"));
+            }
+        }
+        return null;
+    }
+}
