@@ -1,0 +1,260 @@
+{
+  "info": {
+    "_postman_id": "b9e6d7b1-4a2d-4f00-a8d4-0b0d3b47a7d0",
+    "name": "Auth Service - Independent Local Tests",
+    "description": "End-to-end dynamic flow: Sign up (server creates user via Keycloak), log in (server exchanges credentials), then call protected endpoints with captured token. Collection calls only your service endpoints—never Keycloak directly.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "0) E2E Dynamic Flow",
+      "item": [
+        {
+          "name": "Signup - POST /logup (generate unique user)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ts = Date.now();",
+                  "function ensure(k, v) { if (!pm.environment.get(k)) { pm.environment.set(k, v); } }",
+                  "ensure('user_username', 'user_' + ts);",
+                  "ensure('user_email', `user_${ts}@example.com`);",
+                  "ensure('user_password', 'P@ssw0rd123!');",
+                  "ensure('user_firstName', 'Test');",
+                  "ensure('user_lastName', 'User');",
+                  "['access_token','refresh_token','token_type','auth_header','expires_in','refresh_expires_in','scope'].forEach(k => pm.environment.unset(k));",
+                  "pm.environment.set('created_user', 'false');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const acceptable = [201,204,409];",
+                  "pm.test('Signup succeeded (201/204) or user already exists (409)', function () { pm.expect(acceptable).to.include(pm.response.code); });",
+                  "if (pm.response.code === 201 || pm.response.code === 204 || pm.response.code === 409) { pm.environment.set('created_user', 'true'); }",
+                  "// Capture Location header if present\nconst loc = pm.response.headers.get('Location'); if (loc) pm.environment.set('created_user_location', loc);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{user_username}}\",\n  \"password\": \"{{user_password}}\",\n  \"email\": \"{{user_email}}\",\n  \"firstName\": \"{{user_firstName}}\",\n  \"lastName\": \"{{user_lastName}}\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/logup", "host": ["{{base_url}}"], "path": ["logup"] },
+            "description": "Registers a new user through your service (server contacts Keycloak)."
+          }
+        },
+        {
+          "name": "Login - POST /login -> capture tokens",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Login must return 200', function () { pm.response.to.have.status(200); });",
+                  "let json; try { json = pm.response.json(); } catch(e) { json = null; }",
+                  "pm.test('access_token present', function () { pm.expect(json && json.access_token).to.exist; });",
+                  "const tokenType = (json && json.token_type) ? json.token_type : 'Bearer';",
+                  "pm.environment.set('access_token', json.access_token);",
+                  "if (json.refresh_token) pm.environment.set('refresh_token', json.refresh_token);",
+                  "pm.environment.set('token_type', tokenType);",
+                  "pm.environment.set('auth_header', tokenType + ' ' + json.access_token);",
+                  "if (json.expires_in) pm.environment.set('expires_in', json.expires_in.toString());",
+                  "if (json.refresh_expires_in) pm.environment.set('refresh_expires_in', json.refresh_expires_in.toString());",
+                  "if (json.scope) pm.environment.set('scope', json.scope);"
+                ]
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": { "type": "text/javascript", "exec": [
+                "// Ensure signup step ran; if not, we still try login using current env vars",
+                ""] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{user_username}}\",\n  \"password\": \"{{user_password}}\",\n  \"scope\": \"openid\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/login", "host": ["{{base_url}}"], "path": ["login"] },
+            "description": "Logs in through your service (server contacts Keycloak) and captures tokens."
+          }
+        },
+        {
+          "name": "Auth - GET /api/auth/me (expects 200)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": { "type": "text/javascript", "exec": [
+                "if (!pm.environment.get('access_token')) { postman.setNextRequest('Teardown - Clear temp variables'); }"
+              ] }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Returns claims or principal', function () { try { const b = pm.response.json(); pm.expect(b).to.be.an('object'); } catch(e) { pm.expect.fail('Not JSON'); } });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "{{auth_header}}" },
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/auth/me", "host": ["{{base_url}}"], "path": ["api","auth","me"] },
+            "description": "Fetches authenticated user claims via your service."
+          }
+        },
+        {
+          "name": "Auth - GET /api/auth/role/client (expects 200 or 403)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": { "type": "text/javascript", "exec": [
+                "if (!pm.environment.get('access_token')) { postman.setNextRequest('Teardown - Clear temp variables'); }"
+              ] }
+            },
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": [
+                "pm.test('Status is 200 or 403', function () { pm.expect([200,403]).to.include(pm.response.code); });"
+              ] }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "{{auth_header}}" },
+              { "key": "Accept", "value": "text/plain" }
+            ],
+            "url": { "raw": "{{base_url}}/api/auth/role/client", "host": ["{{base_url}}"], "path": ["api","auth","role","client"] },
+            "description": "Role-gated endpoint."
+          }
+        },
+        {
+          "name": "Auth - GET /api/auth/role/agent (expects 200 or 403)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": { "type": "text/javascript", "exec": [
+                "if (!pm.environment.get('access_token')) { postman.setNextRequest('Teardown - Clear temp variables'); }"
+              ] }
+            },
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": [
+                "pm.test('Status is 200 or 403', function () { pm.expect([200,403]).to.include(pm.response.code); });"
+              ] }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "{{auth_header}}" },
+              { "key": "Accept", "value": "text/plain" }
+            ],
+            "url": { "raw": "{{base_url}}/api/auth/role/agent", "host": ["{{base_url}}"], "path": ["api","auth","role","agent"] },
+            "description": "Role-gated endpoint."
+          }
+        },
+        {
+          "name": "Auth - GET /api/auth/role/admin (expects 200 or 403)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": { "type": "text/javascript", "exec": [
+                "if (!pm.environment.get('access_token')) { postman.setNextRequest('Teardown - Clear temp variables'); }"
+              ] }
+            },
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": [
+                "pm.test('Status is 200 or 403', function () { pm.expect([200,403]).to.include(pm.response.code); });"
+              ] }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "{{auth_header}}" },
+              { "key": "Accept", "value": "text/plain" }
+            ],
+            "url": { "raw": "{{base_url}}/api/auth/role/admin", "host": ["{{base_url}}"], "path": ["api","auth","role","admin"] },
+            "description": "Role-gated endpoint."
+          }
+        },
+        {
+          "name": "Teardown - Clear temp variables",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "['user_username','user_password','user_email','user_firstName','user_lastName','created_user','created_user_location'].forEach(k => pm.environment.unset(k));",
+                  "// Remove tokens as well to avoid leaking into subsequent runs",
+                  "['access_token','refresh_token','token_type','auth_header','expires_in','refresh_expires_in','scope'].forEach(k => pm.environment.unset(k));",
+                  "pm.test('Environment cleaned', function(){ pm.expect(true).to.be.true; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""] },
+            "description": "No-op request to run cleanup script."
+          }
+        }
+      ]
+    },
+    {
+      "name": "1) Offline Smoke (optional)",
+      "item": [
+        {
+          "name": "GET /api/auth/me (no token) -> 401",
+          "request": { "method": "GET", "header": [ { "key": "Accept", "value": "application/json" } ], "url": { "raw": "{{base_url}}/api/auth/me", "host": ["{{base_url}}"], "path": ["api","auth","me"] } },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status is 401 Unauthorized', function () { pm.expect(pm.response.code).to.eql(401); });" ] } } ]
+        },
+        {
+          "name": "POST /login (empty body) -> 400",
+          "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Accept", "value": "application/json" } ], "body": { "mode": "raw", "raw": "{}" }, "url": { "raw": "{{base_url}}/login", "host": ["{{base_url}}"], "path": ["login"] } },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status is 400 Bad Request', function () { pm.response.to.have.status(400); });", "const json = pm.response.json(); pm.test('Contains error field', function(){ pm.expect(json).to.have.property('error'); });" ] } } ]
+        },
+        {
+          "name": "POST /logup (empty body) -> 400",
+          "request": { "method": "POST", "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Accept", "value": "application/json" } ], "body": { "mode": "raw", "raw": "{}" }, "url": { "raw": "{{base_url}}/logup", "host": ["{{base_url}}"], "path": ["logup"] } },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status is 400 Bad Request', function () { pm.response.to.have.status(400); });", "const json = pm.response.json(); pm.test('Contains error field', function(){ pm.expect(json).to.have.property('error'); });" ] } } ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "{{base_url}}" }
+  ]
+}
+

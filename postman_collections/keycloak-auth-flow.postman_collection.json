@@ -1,0 +1,162 @@
+{
+  "info": {
+    "name": "Keycloak Auth Service - Signup/Login Flow",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0.0",
+    "description": "Creates a user via /logup, logs them in via /login and stores the access token for subsequent requests. Targets the auth-service (not Keycloak directly)."
+  },
+  "item": [
+    {
+      "name": "1 - Generate unique username",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/__noop"
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// generate a unique username and password for this run",
+              "const ts = Date.now();",
+              "pm.environment.set('test_username', 'testuser_' + ts);",
+              "pm.environment.set('test_password', 'P@ssw0rd' + ts);",
+              "console.log('Generated', pm.environment.get('test_username'));",
+              "// baseUrl default if not set",
+              "if (!pm.environment.get('baseUrl')) pm.environment.set('baseUrl', 'http://localhost:8082');"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "2 - Sign up (logup)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{test_username}}\",\n  \"email\": \"{{test_username}}@example.com\",\n  \"firstName\": \"Test\",\n  \"lastName\": \"User\",\n  \"password\": \"{{test_password}}\",\n  \"roles\": [\"agent\"]\n}"
+        },
+        "url": "{{baseUrl}}/logup"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "// capture Location header (user resource) if available",
+              "const loc = pm.response.headers.get('Location');",
+              "if (loc) pm.environment.set('created_user_location', loc);",
+              "pm.test('signup status is 201 or 200', function () {",
+              "  pm.expect(pm.response.code).to.be.oneOf([201,200]);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "3 - Login (password grant through auth-service)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{test_username}}\",\n  \"password\": \"{{test_password}}\"\n}"
+        },
+        "url": "{{baseUrl}}/login"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('login response 200', function () { pm.response.to.have.status(200); });",
+              "const json = pm.response.json();",
+              "if (json && json.access_token) {",
+              "  pm.environment.set('access_token', json.access_token);",
+              "  pm.environment.set('refresh_token', json.refresh_token || '');",
+              "}",
+              "console.log('Got access_token length:', pm.environment.get('access_token') ? pm.environment.get('access_token').length : 0);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "4 - Get /api/auth/me (claims)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/auth/me"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('me returned 200', function () { pm.response.to.have.status(200); });",
+              "const body = pm.response.json();",
+              "console.log('Claims:', body);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "5 - Call role-protected endpoint (agent)",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}" }
+        ],
+        "url": "{{baseUrl}}/api/auth/role/agent"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('agent endpoint returns success or 403', function () {",
+              "  pm.expect(pm.response.code).to.be.oneOf([200,403]);",
+              "});",
+              "console.log('agent endpoint:', pm.response.code);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "response": []
+    }
+  ],
+  "event": [],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8082" }
+  ]
+}
+
