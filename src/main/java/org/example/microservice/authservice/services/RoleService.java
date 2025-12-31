@@ -25,7 +25,7 @@ public class RoleService {
     // map app roles to realm role names (whitelist)
     public List<String> mapToRealmRoles(List<String> roles) {
         if (roles == null) return List.of();
-        Set<String> allowed = Set.of("client","agent","admin");
+        Set<String> allowed = Set.of("Client","Agent","Admin");
         return roles.stream()
                 .filter(Objects::nonNull)
                 .map(String::trim)

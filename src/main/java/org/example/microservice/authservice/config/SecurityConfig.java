@@ -8,15 +8,15 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.authority.mapping.GrantedAuthoritiesMapper;
 import org.springframework.security.core.authority.mapping.SimpleAuthorityMapper;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.oauth2.jwt.Jwt;
 
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -39,6 +39,7 @@ public class SecurityConfig {
                 ).permitAll()
                 .anyRequest().authenticated()
             )
+            // Use Keycloak JWT as resource server; mapping of roles is done below
             .oauth2ResourceServer(oauth2 -> oauth2
                 .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter()))
             )
@@ -47,15 +48,12 @@ public class SecurityConfig {
         return http.build();
     }
 
-    /**
-     * Convert JWT claims issued by Keycloak into GrantedAuthority instances.
-     * This reads roles from 'realm_access.roles' and 'resource_access.{client}.roles'.
-     */
+    // Convert Keycloak JWT claims into Spring Security authorities
     @Bean
     public JwtAuthenticationConverter jwtAuthenticationConverter() {
         JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
         converter.setJwtGrantedAuthoritiesConverter(jwt -> {
-            // Collect roles from realm_access.roles
+            // Collect roles from Keycloak: realm_access.roles and resource_access.*.roles
             Set<String> roles = Stream.of(
                     extractRealmRoles(jwt),
                     extractResourceRoles(jwt)
@@ -75,6 +73,7 @@ public class SecurityConfig {
         return converter;
     }
 
+    // Read roles from realm_access.roles
     private static Set<String> extractRealmRoles(Jwt jwt) {
         Object realmAccess = jwt.getClaims().get("realm_access");
         if (realmAccess instanceof Map) {
@@ -89,6 +88,7 @@ public class SecurityConfig {
         return Collections.emptySet();
     }
 
+    // Read roles from resource_access.{client}.roles
     @SuppressWarnings("unchecked")
     private static Set<String> extractResourceRoles(Jwt jwt) {
         Object resourceAccess = jwt.getClaims().get("resource_access");
@@ -106,6 +106,7 @@ public class SecurityConfig {
         return Collections.emptySet();
     }
 
+    // Normalize authorities (ROLE_ prefix, upper case)
     @Bean
     public GrantedAuthoritiesMapper grantedAuthoritiesMapper() {
         SimpleAuthorityMapper authorityMapper = new SimpleAuthorityMapper();
