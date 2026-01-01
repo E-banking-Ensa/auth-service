@@ -50,7 +50,7 @@ public class AuthService {
         UserRef ref = userService.createUser(signup, adminToken);
 
         // resolve real Keycloak user id via email
-        String userId = userService.findUserIdByEmail(ref.getEmail(), adminToken);
+        String userId = userService.findUserIdByEmail(ref.email(), adminToken);
 
         // assign requested roles (whitelisted by RoleService)
         List<String> mapped = roleService.mapToRealmRoles(signup.getRoles());
@@ -111,5 +111,67 @@ public class AuthService {
     public void resendVerification(String userId) {
         String adminToken = keycloakAdminClient.obtainAdminAccessToken();
         emailService.sendVerificationEmail(userId, adminToken);
+    }
+
+    // logout user from Keycloak by revoking refresh token
+    public void logout(String refreshToken) {
+        if (refreshToken == null || refreshToken.isBlank()) {
+            throw new IllegalArgumentException("refreshToken is required for logout");
+        }
+
+        String logoutUrl = keycloakAdminClient.getBaseUrl()
+                + "/realms/" + keycloakAdminClient.getRealm()
+                + "/protocol/openid-connect/logout";
+
+        RestTemplate rest = new RestTemplate();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("client_id", clientId);
+        if (clientSecret != null && !clientSecret.isBlank()) {
+            form.add("client_secret", clientSecret);
+        }
+        form.add("refresh_token", refreshToken);
+
+        HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(form, headers);
+        ResponseEntity<Void> resp = rest.postForEntity(URI.create(logoutUrl), entity, Void.class);
+        if (!resp.getStatusCode().is2xxSuccessful()) {
+            throw new HttpClientErrorException(resp.getStatusCode(), "Unable to logout user in Keycloak");
+        }
+    }
+
+    // send a password reset email via Keycloak's execute-actions-email
+    public void sendPasswordRecovery(String email) {
+        if (email == null || email.isBlank()) {
+            throw new IllegalArgumentException("email is required");
+        }
+
+        // admin token to call admin REST API
+        String adminToken = keycloakAdminClient.obtainAdminAccessToken();
+
+        // find user id by email
+        String userId = userService.findUserIdByEmail(email, adminToken);
+        if (userId == null || userId.isBlank()) {
+            throw new HttpClientErrorException(HttpStatus.NOT_FOUND, "User not found for email");
+        }
+
+        String kcBase = keycloakAdminClient.getBaseUrl();
+        String url = kcBase + "/admin/realms/" + keycloakAdminClient.getRealm()
+                + "/users/" + userId + "/execute-actions-email";
+
+        RestTemplate rest = new RestTemplate();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(adminToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        // ask Keycloak to send an UPDATE_PASSWORD action email
+        List<String> actions = List.of("UPDATE_PASSWORD");
+        HttpEntity<List<String>> entity = new HttpEntity<>(actions, headers);
+
+        ResponseEntity<Void> resp = rest.exchange(URI.create(url), HttpMethod.PUT, entity, Void.class);
+        if (!resp.getStatusCode().is2xxSuccessful()) {
+            throw new HttpClientErrorException(resp.getStatusCode(), "Unable to trigger password recovery email");
+        }
     }
 }
