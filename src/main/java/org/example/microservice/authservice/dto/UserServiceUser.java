@@ -8,8 +8,6 @@ import org.example.microservice.authservice.enums.UserRole;
 import java.util.UUID;
 
 public class UserServiceUser {
-    @NotNull
-    UUID keycloakId;
     @NotBlank String username;
     @NotBlank
     @Email

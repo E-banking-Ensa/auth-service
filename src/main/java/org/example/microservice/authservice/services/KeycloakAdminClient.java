@@ -10,6 +10,7 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.net.URI;
+import java.util.*;
 
 @Service
 public class KeycloakAdminClient {
@@ -60,5 +61,43 @@ public class KeycloakAdminClient {
     public RestTemplate getRestTemplate() {
         return restTemplate;
     }
-}
 
+    // Fetch user's realm-level roles from Keycloak admin REST API
+    // Returns a set of role names or empty set on no roles
+    public Set<String> getUserRealmRoles(String userId) {
+        if (userId == null || userId.isBlank()) {
+            return Collections.emptySet();
+        }
+
+        try {
+            String token = obtainAdminAccessToken();
+            String url = String.format("%s/admin/realms/%s/users/%s/role-mappings/realm", getBaseUrl(), realm, userId);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(token);
+            headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
+
+            HttpEntity<Void> entity = new HttpEntity<>(headers);
+
+            ResponseEntity<List> resp = restTemplate.exchange(URI.create(url), HttpMethod.GET, entity, List.class);
+            if (!resp.getStatusCode().is2xxSuccessful() || resp.getBody() == null) {
+                return Collections.emptySet();
+            }
+
+            List<?> body = resp.getBody();
+            Set<String> roles = new HashSet<>();
+            for (Object item : body) {
+                if (item instanceof Map) {
+                    Object name = ((Map<?, ?>) item).get("name");
+                    if (name != null) {
+                        roles.add(name.toString());
+                    }
+                }
+            }
+            return roles;
+        } catch (Exception e) {
+            // propagate as runtime to be handled by caller; caller may fallback
+            throw new RuntimeException("Failed to fetch user roles from Keycloak: " + e.getMessage(), e);
+        }
+    }
+}

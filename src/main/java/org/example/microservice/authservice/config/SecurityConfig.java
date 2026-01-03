@@ -1,8 +1,10 @@
 package org.example.microservice.authservice.config;
 
+import org.example.microservice.authservice.services.KeycloakAdminClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -24,6 +26,15 @@ import java.util.stream.Stream;
 @EnableMethodSecurity
 public class SecurityConfig {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(SecurityConfig.class);
+
+    private final KeycloakAdminClient keycloakAdminClient;
+
+    // inject KeycloakAdminClient
+    public SecurityConfig(KeycloakAdminClient keycloakAdminClient) {
+        this.keycloakAdminClient = keycloakAdminClient;
+    }
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
@@ -39,11 +50,10 @@ public class SecurityConfig {
                 ).permitAll()
                 .anyRequest().authenticated()
             )
-            // Use Keycloak JWT as resource server; mapping of roles is done below
+            // API-only: act as OAuth2 resource-server using Keycloak JWT, no redirects / form login
             .oauth2ResourceServer(oauth2 -> oauth2
                 .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter()))
-            )
-            .oauth2Login(Customizer.withDefaults());
+            );
 
         return http.build();
     }
@@ -53,19 +63,36 @@ public class SecurityConfig {
     public JwtAuthenticationConverter jwtAuthenticationConverter() {
         JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
         converter.setJwtGrantedAuthoritiesConverter(jwt -> {
-            // Collect roles from Keycloak: realm_access.roles and resource_access.*.roles
-            Set<String> roles = Stream.of(
+            // Start with roles from JWT claims
+            Set<String> rolesFromClaims = Stream.of(
                     extractRealmRoles(jwt),
                     extractResourceRoles(jwt)
                 )
                 .flatMap(Set::stream)
                 .collect(Collectors.toSet());
 
-            if (roles.isEmpty()) {
+            // Try to fetch authoritative realm roles from Keycloak admin REST API using the JWT subject (user id)
+            Set<String> rolesFromKeycloak = Collections.emptySet();
+            try {
+                String subject = jwt.getSubject();
+                if (subject != null && !subject.isBlank()) {
+                    rolesFromKeycloak = keycloakAdminClient.getUserRealmRoles(subject);
+                }
+            } catch (Exception e) {
+                // log and continue with claim-based roles as fallback
+                LOGGER.warn("Failed to fetch roles from Keycloak admin API for jwt.sub={}: {}", jwt.getSubject(), e.getMessage());
+            }
+
+            // Merge both sources (Keycloak admin roles take precedence but we union them)
+            Set<String> merged = Stream.of(rolesFromClaims, rolesFromKeycloak)
+                    .flatMap(Set::stream)
+                    .collect(Collectors.toSet());
+
+            if (merged.isEmpty()) {
                 return Collections.emptyList();
             }
 
-            return roles.stream()
+            return merged.stream()
                     .map(r -> new SimpleGrantedAuthority("ROLE_" + r.toUpperCase()))
                     .collect(Collectors.toList());
         });
