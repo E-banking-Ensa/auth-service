@@ -1,9 +1,12 @@
 package org.example.microservice.authservice.services;
 
+import org.example.microservice.authservice.client.UserServiceClient;
 import org.example.microservice.authservice.dto.LoginRequest;
 import org.example.microservice.authservice.dto.SignupRequest;
 import org.example.microservice.authservice.dto.TokenResponse;
 import org.example.microservice.authservice.dto.UserRef;
+import org.example.microservice.authservice.dto.UserServiceUser;
+import org.example.microservice.authservice.enums.UserRole;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
@@ -11,6 +14,8 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.URI;
 import java.util.List;
@@ -19,10 +24,12 @@ import java.util.List;
 @Service
 public class AuthService {
 
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
     private final KeycloakAdminClient keycloakAdminClient;
     private final UserService userService;
     private final RoleService roleService;
     private final EmailVerificationService emailService;
+    private final UserServiceClient userServiceClient;
 
     @Value("${app.security.client-id:auth-service}")
     private String clientId;
@@ -33,11 +40,13 @@ public class AuthService {
     public AuthService(KeycloakAdminClient keycloakAdminClient,
                        UserService userService,
                        RoleService roleService,
-                       EmailVerificationService emailService) {
+                       EmailVerificationService emailService,
+                       UserServiceClient userServiceClient) {
         this.keycloakAdminClient = keycloakAdminClient;
         this.userService = userService;
         this.roleService = roleService;
         this.emailService = emailService;
+        this.userServiceClient = userServiceClient;
     }
 
     // register a new user in Keycloak, assign roles and send verification email
@@ -49,19 +58,55 @@ public class AuthService {
         // create user in Keycloak (returns email + location)
         UserRef ref = userService.createUser(signup, adminToken);
 
+        // After creating user in Keycloak, create user in user-service
+        try {
+            // Map single role string to enum, default to Client on error
+            UserRole role = UserRole.Client;
+            String rawRole = signup.getRole();
+            if (rawRole != null && !rawRole.isBlank()) {
+                try {
+                    role = UserRole.valueOf(rawRole);
+                } catch (IllegalArgumentException ex) {
+                    log.warn("Unknown role '{}' in signup, defaulting to {}", rawRole, role);
+                }
+            }
+
+            String fullName = signup.getFirstName() + " " + signup.getLastName();
+
+            UserServiceUser newUser = UserServiceUser.builder()
+                    .username(signup.getUsername())
+                    .email(signup.getEmail())
+                    // age is not provided in signup, will default to 0
+                    .fullName(fullName)
+                    .phoneNumber(signup.getPhoneNumber())
+                    .role(role)
+                    .address(signup.getAddress())
+                    .build();
+
+            log.info("Calling user-service to create user: {}", newUser.getUsername());
+            userServiceClient.createUser(newUser);
+            log.info("Successfully created user in user-service database.");
+
+        } catch (Exception e) {
+            log.error("Failed to create user in user-service after creating it in Keycloak. User: {}", signup.getUsername(), e);
+        }
+
         // resolve real Keycloak user id via email
         String userId = userService.findUserIdByEmail(ref.email(), adminToken);
 
-        // assign requested roles (whitelisted by RoleService)
-        List<String> mapped = roleService.mapToRealmRoles(signup.getRoles());
-        if (mapped != null && !mapped.isEmpty() && userId != null && !userId.isBlank()) {
-            roleService.assignRealmRoles(userId, mapped, adminToken);
+        // assign requested role in Keycloak via RoleService; wrap single role into list
+        if (signup.getRole() != null && !signup.getRole().isBlank()) {
+            List<String> roles = List.of(signup.getRole());
+            List<String> mapped = roleService.mapToRealmRoles(roles);
+            if (mapped != null && !mapped.isEmpty() && userId != null && !userId.isBlank()) {
+                roleService.assignRealmRoles(userId, mapped, adminToken);
+            }
         }
 
-        // trigger email verification
-        //if (userId != null && !userId.isBlank()) {
-        //    emailService.sendVerificationEmail(userId, adminToken);
-        //}
+        // trigger email verification (currently disabled)
+        // if (userId != null && !userId.isBlank()) {
+        //     emailService.sendVerificationEmail(userId, adminToken);
+        // }
 
         return ref;
     }

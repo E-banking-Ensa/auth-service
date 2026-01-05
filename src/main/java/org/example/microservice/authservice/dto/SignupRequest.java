@@ -3,9 +3,6 @@ package org.example.microservice.authservice.dto;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Getter;
-import lombok.NonNull;
-import lombok.Setter;
-import org.example.microservice.authservice.enums.UserRole;
 
 import java.util.List;
 
@@ -23,21 +20,26 @@ public class SignupRequest {
     @NotBlank
     private String password;
     @NotBlank
-    String phoneNumber;
+    private String phoneNumber;
     @NotBlank
-    String address;
+    private String address;
     @NotBlank
-    private List<String> roles;
+    private String role; // single role instead of list
 
-    public SignupRequest(String email,List<String> roles, String firstName, String lastName, String password, String phoneNumber, String address) {
-        this.username = firstName+" "+ lastName+ " " +email ;
+    public SignupRequest(String email,
+                         String role,
+                         String firstName,
+                         String lastName,
+                         String password,
+                         String phoneNumber,
+                         String address) {
+        this.username = firstName + " " + lastName + " " + email;
         this.email = email;
         this.firstName = firstName;
         this.lastName = lastName;
         this.password = password;
         this.phoneNumber = phoneNumber;
         this.address = address;
-        this.roles = roles;
+        this.role = role;
     }
-
 }
