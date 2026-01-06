@@ -71,16 +71,17 @@ public class AuthService {
                 }
             }
 
-            String fullName = signup.getFirstName() + " " + signup.getLastName();
+//            String fullName = signup.getFirstName() + " " + signup.getLastName(); // Removed
 
             UserServiceUser newUser = UserServiceUser.builder()
                     .username(signup.getUsername())
                     .email(signup.getEmail())
                     // age is not provided in signup, will default to 0
-                    .fullName(fullName)
+                    .firstName(signup.getFirstName()) // Added
+                    .lastName(signup.getLastName())   // Added
                     .phoneNumber(signup.getPhoneNumber())
                     .role(role)
-                    .address(signup.getAddress())
+                    .adresse(signup.getAddress()) // Mapped address to adresse
                     .build();
 
             log.info("Calling user-service to create user: {}", newUser.getUsername());

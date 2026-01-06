@@ -19,9 +19,10 @@ public class UserServiceUser {
     @Email
     String email;
     int age;
-    @NotBlank String fullName;
+    @NotBlank String firstName;
+    @NotBlank String lastName;
     @NotBlank String phoneNumber;
-    @NotNull // Use @NotNull for enums, not @NotBlank
+    @NotNull
     UserRole role;
-    String address;
+    String adresse; // Matches 'adresse' in user-service DTO
 }
